@@ -24,7 +24,11 @@ const defaultExpenses = [
 let expenses = defaultExpenses;
 let selectedCategory = "food";
 let selectedParticipants = new Set(members.map(m => m.id));
+let selectedPlanParticipants = new Set(members.map(m => m.id));
 let activeDay = 0;
+let currentUserId = "lulu";
+let sharedPlans = [];
+let sharedChecklist = { visa: true, sim: true, cash: true, map: false, luggage: false };
 
 const schedules = [
   {
@@ -69,16 +73,10 @@ const schedules = [
   }
 ];
 
-const rooms = [
+let rooms = [
   { number: "201", type: "庭院双床房", detail: "2 张单人床 · 独立卫浴", members: ["lulu", "jiajia"] },
   { number: "202", type: "韩屋榻榻米房", detail: "2 套地铺 · 庭院景观", members: ["xiaobei", "ahuang"] },
   { number: "203", type: "阁楼双人房", detail: "1 张双人床 · 独立卫浴", members: ["momo", "anan"] }
-];
-
-const activities = [
-  { who: "嘉嘉", initial: "嘉", tone: "yellow", text: "添加了一笔「明洞烤肉预订」", time: "2 分钟前" },
-  { who: "阿黄", initial: "黄", tone: "blue", text: "上传了 N 首尔塔门票", time: "18 分钟前" },
-  { who: "小北", initial: "北", tone: "mint", text: "把汉江野餐加入共同安排", time: "1 小时前" }
 ];
 
 const categoryMeta = {
@@ -92,6 +90,70 @@ const byId = id => document.getElementById(id);
 const money = amount => `¥${Number(amount).toLocaleString("zh-CN", { maximumFractionDigits: 2 })}`;
 const memberById = id => members.find(member => member.id === id);
 const avatar = (member, extra = "") => `<span class="avatar avatar-${member.tone} ${extra}">${member.initial}</span>`;
+const cleanProfileText = value => String(value || "").replace(/[<>"'&]/g, "").trim();
+const escapeHtml = value => String(value || "").replace(/[&<>"']/g, character => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
+})[character]);
+
+function loadProfile() {
+  try {
+    const savedProfile = JSON.parse(localStorage.getItem("tripmate-profile") || "null");
+    if (!savedProfile || !memberById(savedProfile.memberId)) return;
+    currentUserId = savedProfile.memberId;
+    const currentMember = memberById(currentUserId);
+    currentMember.name = cleanProfileText(savedProfile.name) || currentMember.name;
+    currentMember.role = cleanProfileText(savedProfile.role) || currentMember.role;
+    currentMember.initial = currentMember.name.trim().slice(0, 1) || currentMember.initial;
+  } catch (error) {
+    console.warn("Could not load local profile:", error);
+  }
+}
+
+function renderProfile() {
+  const currentMember = memberById(currentUserId);
+  byId("profileAvatar").className = `avatar avatar-${currentMember.tone}`;
+  byId("profileAvatar").textContent = currentMember.initial;
+  byId("mobileProfileAvatar").textContent = currentMember.initial;
+  byId("profileName").textContent = currentMember.name;
+  byId("profileRole").textContent = `旅行${currentMember.role}`;
+  byId("myIdentityHint").textContent = `以${currentMember.name}的身份查看`;
+}
+
+function openProfileModal() {
+  const currentMember = memberById(currentUserId);
+  openSimpleModal("编辑我的旅行资料", "选择你在这次旅行中的身份，并修改自己的显示资料。", `
+    <form class="profile-form" id="profileForm">
+      <label>我是谁
+        <select id="profileMemberId">${members.map(member => `<option value="${member.id}" ${member.id === currentUserId ? "selected" : ""}>${member.name}</option>`).join("")}</select>
+      </label>
+      <label>显示昵称<input id="profileDisplayName" maxlength="12" value="${currentMember.name}" required /></label>
+      <label>旅行分工<input id="profileDisplayRole" maxlength="16" value="${currentMember.role}" placeholder="例如：路线担当" required /></label>
+      <p class="profile-form-note">个人资料保存在这台设备上，不会修改其他朋友设备上的昵称。</p>
+      <button class="button button-primary full-button" type="submit">保存个人资料</button>
+    </form>
+  `);
+}
+
+function saveProfile() {
+  const memberId = byId("profileMemberId").value;
+  const currentMember = memberById(memberId);
+  currentUserId = memberId;
+  currentMember.name = cleanProfileText(byId("profileDisplayName").value) || currentMember.name;
+  currentMember.role = cleanProfileText(byId("profileDisplayRole").value) || currentMember.role;
+  currentMember.initial = currentMember.name.slice(0, 1) || currentMember.initial;
+  localStorage.setItem("tripmate-profile", JSON.stringify({
+    memberId: currentUserId,
+    name: currentMember.name,
+    role: currentMember.role
+  }));
+  renderMembers();
+  renderProfile();
+  renderSchedule();
+  renderRooms();
+  renderAllExpenseData();
+  byId("simpleModal").classList.remove("open");
+  showToast("个人资料已保存");
+}
 
 function setSyncStatus(message, connected = true) {
   byId("syncTime").textContent = message;
@@ -124,14 +186,16 @@ async function loadSharedExpenses({ quiet = false } = {}) {
 
   expenses = data.map(expense => ({
     id: expense.id,
-    title: expense.title,
+    title: escapeHtml(expense.title),
     amount: Number(expense.amount),
     payer: expense.payer,
     category: expense.category,
     participants: expense.participants,
-    date: formatSharedDate(expense.created_at)
+    date: formatSharedDate(expense.created_at),
+    createdAt: expense.created_at
   }));
   renderAllExpenseData();
+  renderActivities();
   setSyncStatus("刚刚同步");
   return true;
 }
@@ -148,6 +212,101 @@ function subscribeToSharedExpenses() {
     .subscribe(status => {
       if (status === "SUBSCRIBED") setSyncStatus("实时同步中");
     });
+}
+
+async function loadSharedPlans({ quiet = false } = {}) {
+  if (!supabaseClient) return false;
+
+  const { data, error } = await supabaseClient
+    .from("shared_plans")
+    .select("*")
+    .eq("trip_code", TRIP_CODE)
+    .order("plan_time", { ascending: true });
+
+  if (error) {
+    console.error("Supabase plan load error:", error);
+    if (!quiet) showToast("共享安排尚未初始化，请重新运行设置脚本");
+    return false;
+  }
+
+  sharedPlans = data.map(plan => ({
+    id: plan.id,
+    dayIndex: plan.day_index,
+    time: plan.plan_time,
+    icon: escapeHtml(plan.icon || "行"),
+    title: escapeHtml(plan.title),
+    detail: escapeHtml(plan.detail || "由同行朋友添加"),
+    people: plan.participants.filter(id => memberById(id)),
+    shared: true,
+    createdBy: plan.created_by,
+    createdAt: plan.created_at
+  }));
+  renderSchedule();
+  renderActivities();
+  return true;
+}
+
+function subscribeToSharedPlans() {
+  if (!supabaseClient) return;
+  supabaseClient
+    .channel(`tripmate-plans-${TRIP_CODE}`)
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "shared_plans", filter: `trip_code=eq.${TRIP_CODE}` },
+      () => loadSharedPlans({ quiet: true })
+    )
+    .subscribe();
+}
+
+async function loadSharedRooms({ quiet = false } = {}) {
+  if (!supabaseClient) return false;
+  const { data, error } = await supabaseClient
+    .from("shared_rooms")
+    .select("*")
+    .eq("trip_code", TRIP_CODE)
+    .order("room_number", { ascending: true });
+
+  if (error) {
+    console.error("Supabase room load error:", error);
+    if (!quiet) showToast("共享分房尚未初始化，请重新运行设置脚本");
+    return false;
+  }
+  if (data.length) {
+    rooms = data.map(room => ({
+      number: room.room_number,
+      type: escapeHtml(room.room_type),
+      detail: escapeHtml(room.room_detail),
+      members: room.members.filter(id => memberById(id))
+    }));
+    renderRooms();
+  }
+  return true;
+}
+
+async function loadSharedChecklist({ quiet = false } = {}) {
+  if (!supabaseClient) return false;
+  const { data, error } = await supabaseClient
+    .from("shared_checklist")
+    .select("*")
+    .eq("trip_code", TRIP_CODE);
+
+  if (error) {
+    console.error("Supabase checklist load error:", error);
+    if (!quiet) showToast("共享清单尚未初始化，请重新运行设置脚本");
+    return false;
+  }
+  data.forEach(item => { sharedChecklist[item.item_id] = item.completed; });
+  renderChecklist();
+  return true;
+}
+
+function subscribeToTripDetails() {
+  if (!supabaseClient) return;
+  supabaseClient
+    .channel(`tripmate-details-${TRIP_CODE}`)
+    .on("postgres_changes", { event: "*", schema: "public", table: "shared_rooms", filter: `trip_code=eq.${TRIP_CODE}` }, () => loadSharedRooms({ quiet: true }))
+    .on("postgres_changes", { event: "*", schema: "public", table: "shared_checklist", filter: `trip_code=eq.${TRIP_CODE}` }, () => loadSharedChecklist({ quiet: true }))
+    .subscribe();
 }
 
 function renderMembers() {
@@ -206,17 +365,17 @@ function renderMoney() {
   const foodP = totals.total ? totals.food / totals.total * 100 : 0;
   byId("donut").style.background = `conic-gradient(var(--coral) 0 ${lodgingP}%, var(--yellow) ${lodgingP}% ${lodgingP + foodP}%, var(--mint) ${lodgingP + foodP}% 100%)`;
 
-  const myPaid = expenses.filter(e => e.payer === "lulu").reduce((sum,e) => sum + e.amount, 0);
-  const myBalance = calculateBalances().lulu;
+  const myPaid = expenses.filter(e => e.payer === currentUserId).reduce((sum,e) => sum + e.amount, 0);
+  const myBalance = calculateBalances()[currentUserId];
   byId("myPaid").textContent = money(myPaid);
   byId("myBalance").textContent = `${myBalance >= 0 ? "+" : "-"}${money(Math.abs(myBalance))}`;
   byId("balanceHint").textContent = myBalance >= 0 ? "其他人需要付给我" : "我最终还需要支付";
 
-  const mySettlement = getSettlements().find(item => item.from === "lulu" || item.to === "lulu");
+  const mySettlement = getSettlements().find(item => item.from === currentUserId || item.to === currentUserId);
   if (!mySettlement) {
     byId("quickSettlementTitle").textContent = "你目前已经完全平账";
     byId("quickSettlement").textContent = "没有待处理的转账";
-  } else if (mySettlement.from === "lulu") {
+  } else if (mySettlement.from === currentUserId) {
     byId("quickSettlementTitle").textContent = `你需要付给${memberById(mySettlement.to).name}`;
     byId("quickSettlement").textContent = `${money(mySettlement.amount)} · 等旅行结束再转也可以`;
   } else {
@@ -226,23 +385,38 @@ function renderMoney() {
 }
 
 function renderActivities() {
-  byId("activityList").innerHTML = activities.map(item => `
-    <div class="activity">${avatar({ initial: item.initial, tone: item.tone })}
-      <div class="activity-copy"><p><strong>${item.who}</strong> ${item.text}</p><small>${item.time}</small></div>
-    </div>
-  `).join("");
+  const recent = [
+    ...expenses.filter(item => item.createdAt).map(item => ({ memberId: item.payer, text: `添加了一笔「${item.title}」`, createdAt: item.createdAt })),
+    ...sharedPlans.filter(item => item.createdAt).map(item => ({ memberId: item.createdBy, text: `添加了共同安排「${item.title}」`, createdAt: item.createdAt }))
+  ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 3);
+  const items = recent.length ? recent : [
+    { memberId: "jiajia", text: "添加了一笔「明洞烤肉预订」", time: "最近" },
+    { memberId: "ahuang", text: "确认了 N 首尔塔门票", time: "最近" },
+    { memberId: "xiaobei", text: "把汉江野餐加入共同安排", time: "最近" }
+  ];
+  byId("activityList").innerHTML = items.map(item => {
+    const member = memberById(item.memberId) || memberById("lulu");
+    return `<div class="activity">${avatar(member)}
+      <div class="activity-copy"><p><strong>${member.name}</strong> ${item.text}</p><small>${item.time || formatSharedDate(item.createdAt)}</small></div>
+    </div>`;
+  }).join("");
 }
 
 function renderSchedule() {
+  const dayItems = [
+    ...schedules[activeDay].items,
+    ...sharedPlans.filter(plan => Number(plan.dayIndex) === activeDay)
+  ].sort((a, b) => a.time.localeCompare(b.time));
   byId("dayTabs").innerHTML = schedules.map((day, index) => `
     <button class="day-tab ${index === activeDay ? "active" : ""}" data-day="${index}" type="button"><strong>${day.day} · ${day.title}</strong><small>${day.date}</small></button>
   `).join("");
-  byId("scheduleList").innerHTML = schedules[activeDay].items.map(item => `
-    <article class="schedule-item">
+  byId("scheduleList").innerHTML = dayItems.map(item => `
+    <article class="schedule-item ${item.shared ? "shared-plan" : ""}">
       <span class="schedule-time">${item.time}</span>
       <span class="schedule-icon">${item.icon}</span>
-      <div><h3>${item.title}</h3><p>${item.detail}</p></div>
+      <div><h3>${item.title}${item.shared ? '<span class="shared-plan-label">共同添加</span>' : ""}</h3><p>${item.detail}</p></div>
       <div class="schedule-members">${item.people.slice(0,4).map(id => avatar(memberById(id))).join("")}</div>
+      ${item.shared ? `<div class="item-actions"><button class="item-action" data-delete-plan="${item.id}" type="button" title="删除安排">删</button></div>` : ""}
     </article>
   `).join("");
   document.querySelectorAll(".day-tab").forEach(button => button.addEventListener("click", () => {
@@ -261,7 +435,19 @@ function renderRooms() {
       }).join("")}</div>
     </article>
   `).join("");
-  document.querySelectorAll("[data-room-member]").forEach(button => button.addEventListener("click", () => showToast("调整分房功能已准备好，可以拖动交换成员")));
+  document.querySelectorAll("[data-room-member]").forEach(button => button.addEventListener("click", openRoomEditor));
+}
+
+function renderChecklist() {
+  const checkboxes = [...document.querySelectorAll("[data-checklist-id]")];
+  checkboxes.forEach(checkbox => {
+    checkbox.checked = Boolean(sharedChecklist[checkbox.dataset.checklistId]);
+  });
+  const completed = Object.values(sharedChecklist).filter(Boolean).length;
+  const count = document.querySelector(".checklist-card .panel-title span");
+  if (count) count.textContent = `${completed} / ${checkboxes.length}`;
+  byId("prepProgress").style.width = `${checkboxes.length ? completed / checkboxes.length * 100 : 0}%`;
+  byId("prepProgressLabel").textContent = `行前准备 ${completed} / ${checkboxes.length} 项已完成`;
 }
 
 function renderLedger() {
@@ -270,7 +456,7 @@ function renderLedger() {
   byId("ledgerList").innerHTML = filtered.length ? filtered.slice().reverse().map(expense => {
     const payer = memberById(expense.payer);
     const meta = categoryMeta[expense.category];
-    return `<div class="ledger-item">
+    return `<div class="ledger-item clickable" data-expense-id="${expense.id}">
       <span class="ledger-icon">${meta.icon}</span>
       <span class="ledger-copy"><strong>${expense.title}</strong><small>${payer.name} 支付 · ${expense.date}</small></span>
       <span class="ledger-split"><strong>${expense.participants.length} 人均摊</strong><small>每人 ${money(expense.amount / expense.participants.length)}</small></span>
@@ -313,7 +499,7 @@ function openExpenseModal() {
   selectedParticipants = new Set(members.map(m => m.id));
   selectedCategory = "food";
   byId("expenseForm").reset();
-  byId("expensePayer").value = "lulu";
+  byId("expensePayer").value = currentUserId;
   document.querySelectorAll(".category-choice").forEach(choice => choice.classList.toggle("selected", choice.dataset.category === selectedCategory));
   document.querySelectorAll(".split-person").forEach(person => person.classList.remove("excluded"));
   updateSplitPreview();
@@ -336,6 +522,202 @@ function openSimpleModal(title, body, extra = "") {
   byId("simpleModalContent").innerHTML = `<p class="eyebrow">TRIPMATE</p><h2>${title}</h2><p>${body}</p>${extra}`;
   byId("simpleModal").classList.add("open");
   byId("simpleModal").setAttribute("aria-hidden", "false");
+}
+
+function openPlanModal() {
+  selectedPlanParticipants = new Set(members.map(member => member.id));
+  openSimpleModal("添加共同安排", "保存后，所有同行朋友都能立即看到。", `
+    <form class="profile-form" id="planForm">
+      <div class="form-grid">
+        <label>哪一天
+          <select id="planDay">${schedules.map((day, index) => `<option value="${index}" ${index === activeDay ? "selected" : ""}>${day.day} · ${day.date}</option>`).join("")}</select>
+        </label>
+        <label>开始时间<input id="planTime" type="time" value="10:00" required /></label>
+      </div>
+      <div class="form-grid">
+        <label>安排名称<input id="planTitle" maxlength="40" placeholder="例如：汉江野餐" required /></label>
+        <label>图标文字<input id="planIcon" maxlength="1" value="行" required /></label>
+      </div>
+      <label>地点或备注<input id="planDetail" maxlength="80" placeholder="例如：汝矣岛汉江公园集合" /></label>
+      <label>参与成员
+        <div class="plan-participants">${members.map(member => `
+          <button class="split-person selected" data-plan-person="${member.id}" type="button">${avatar(member)}<span>${member.name}</span></button>
+        `).join("")}</div>
+      </label>
+      <button class="button button-primary full-button" type="submit">保存并同步安排</button>
+    </form>
+  `);
+}
+
+async function saveSharedPlan(form) {
+  const submitButton = form.querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  submitButton.textContent = "正在同步...";
+  const plan = {
+    trip_code: TRIP_CODE,
+    day_index: Number(byId("planDay").value),
+    plan_time: byId("planTime").value,
+    title: cleanProfileText(byId("planTitle").value),
+    detail: cleanProfileText(byId("planDetail").value),
+    icon: cleanProfileText(byId("planIcon").value).slice(0, 1) || "行",
+    participants: [...selectedPlanParticipants],
+    created_by: currentUserId
+  };
+
+  const { error } = supabaseClient
+    ? await supabaseClient.from("shared_plans").insert(plan)
+    : { error: new Error("同步服务未加载") };
+
+  submitButton.disabled = false;
+  submitButton.textContent = "保存并同步安排";
+  if (error) {
+    console.error("Supabase plan insert error:", error);
+    showToast("保存失败，请重新运行数据库设置脚本");
+    return;
+  }
+
+  activeDay = plan.day_index;
+  byId("simpleModal").classList.remove("open");
+  await loadSharedPlans({ quiet: true });
+  showToast("共同安排已同步");
+}
+
+function openTripInfo() {
+  openSimpleModal("首尔吃喝小分队", "这是当前唯一的旅行空间。把邀请网址发给朋友即可共同使用。", `
+    <div class="voucher-details">
+      <div><span>旅行日期</span><strong>2026 年 6 月 30 日 – 7 月 4 日</strong></div>
+      <div><span>同行人数</span><strong>${members.length} 人</strong></div>
+      <div><span>旅行代码</span><strong>${TRIP_CODE}</strong></div>
+    </div>
+    <button class="button button-primary full-button" id="copyInviteLink" type="button">复制邀请网址</button>
+  `);
+}
+
+function openVoucher() {
+  openSimpleModal("安国站韩屋民宿入住凭证", "入住时向前台出示以下信息。", `
+    <div class="voucher-details">
+      <div><span>预订确认号</span><strong>AGH-SEOUL-0630</strong></div>
+      <div><span>预订人</span><strong>露露</strong></div>
+      <div><span>入住时间</span><strong>6 月 30 日 15:00 后</strong></div>
+      <div><span>退房时间</span><strong>7 月 4 日 11:00 前</strong></div>
+      <div><span>地址</span><strong>首尔钟路区北村路 12 街 8</strong></div>
+    </div>
+    <button class="button button-primary full-button" id="copyVoucherButton" type="button">复制入住信息</button>
+  `);
+}
+
+function openRoomEditor() {
+  const assignedRoom = memberId => rooms.find(room => room.members.includes(memberId))?.number || rooms[0].number;
+  openSimpleModal("调整房间分配", "选择每位成员入住的房间，保存后会同步给大家。", `
+    <form class="profile-form" id="roomForm">
+      <div class="room-editor">${members.map(member => `
+        <label>${avatar(member)}<strong>${member.name}</strong>
+          <select data-room-select="${member.id}">
+            ${rooms.map(room => `<option value="${room.number}" ${assignedRoom(member.id) === room.number ? "selected" : ""}>${room.number} · ${room.type}</option>`).join("")}
+          </select>
+        </label>
+      `).join("")}</div>
+      <button class="button button-primary full-button" type="submit">保存分房安排</button>
+    </form>
+  `);
+}
+
+async function saveRoomAssignments(form) {
+  const assignments = Object.fromEntries(rooms.map(room => [room.number, []]));
+  form.querySelectorAll("[data-room-select]").forEach(select => {
+    assignments[select.value].push(select.dataset.roomSelect);
+  });
+  const rows = rooms.map(room => ({
+    trip_code: TRIP_CODE,
+    room_number: room.number,
+    room_type: room.type,
+    room_detail: room.detail,
+    members: assignments[room.number]
+  }));
+  const { error } = supabaseClient
+    ? await supabaseClient.from("shared_rooms").upsert(rows, { onConflict: "trip_code,room_number" })
+    : { error: new Error("同步服务未加载") };
+  if (error) {
+    console.error("Supabase room save error:", error);
+    showToast("保存失败，请重新运行数据库设置脚本");
+    return;
+  }
+  byId("simpleModal").classList.remove("open");
+  await loadSharedRooms({ quiet: true });
+  showToast("分房安排已同步");
+}
+
+async function saveChecklistItem(checkbox) {
+  const itemId = checkbox.dataset.checklistId;
+  sharedChecklist[itemId] = checkbox.checked;
+  renderChecklist();
+  const { error } = supabaseClient
+    ? await supabaseClient.from("shared_checklist").upsert({
+        trip_code: TRIP_CODE,
+        item_id: itemId,
+        completed: checkbox.checked,
+        updated_by: currentUserId
+      }, { onConflict: "trip_code,item_id" })
+    : { error: new Error("同步服务未加载") };
+  if (error) {
+    checkbox.checked = !checkbox.checked;
+    sharedChecklist[itemId] = checkbox.checked;
+    renderChecklist();
+    showToast("清单同步失败，请重新运行数据库设置脚本");
+  }
+}
+
+function openExpenseDetail(expenseId) {
+  const expense = expenses.find(item => String(item.id) === String(expenseId));
+  if (!expense) return;
+  const payer = memberById(expense.payer);
+  openSimpleModal(expense.title, "共同开销详情", `
+    <div class="voucher-details">
+      <div><span>金额</span><strong>${money(expense.amount)}</strong></div>
+      <div><span>付款人</span><strong>${payer.name}</strong></div>
+      <div><span>分类</span><strong>${categoryMeta[expense.category].label}</strong></div>
+      <div><span>均摊成员</span><strong>${expense.participants.map(id => memberById(id)?.name).filter(Boolean).join("、")}</strong></div>
+    </div>
+    <button class="button button-secondary full-button" data-delete-expense="${expense.id}" type="button">删除这笔开销</button>
+  `);
+}
+
+async function deleteExpense(expenseId) {
+  if (!window.confirm("确认删除这笔开销吗？删除后所有人都会看不到它。")) return;
+  const { error } = supabaseClient
+    ? await supabaseClient.from("shared_expenses").delete().eq("id", expenseId).eq("trip_code", TRIP_CODE)
+    : { error: new Error("同步服务未加载") };
+  if (error) {
+    console.error("Supabase expense delete error:", error);
+    showToast("删除失败，请重新运行数据库设置脚本");
+    return;
+  }
+  byId("simpleModal").classList.remove("open");
+  await loadSharedExpenses({ quiet: true });
+  showToast("开销已删除");
+}
+
+async function deletePlan(planId) {
+  if (!window.confirm("确认删除这项共同安排吗？")) return;
+  const { error } = supabaseClient
+    ? await supabaseClient.from("shared_plans").delete().eq("id", planId).eq("trip_code", TRIP_CODE)
+    : { error: new Error("同步服务未加载") };
+  if (error) {
+    console.error("Supabase plan delete error:", error);
+    showToast("删除失败，请重新运行数据库设置脚本");
+    return;
+  }
+  await loadSharedPlans({ quiet: true });
+  showToast("共同安排已删除");
+}
+
+function copySettlementSummary() {
+  const settlements = getSettlements();
+  const text = settlements.length
+    ? `首尔旅行结算清单\n${settlements.map(item => `${memberById(item.from).name} → ${memberById(item.to).name}：${money(item.amount)}`).join("\n")}`
+    : "首尔旅行结算清单\n所有人已结清";
+  navigator.clipboard?.writeText(text);
+  showToast("结算清单已复制，可以发到群里");
 }
 
 document.querySelectorAll(".nav-item[data-page], [data-jump]").forEach(button => button.addEventListener("click", () => navigate(button.dataset.page || button.dataset.jump)));
@@ -367,7 +749,7 @@ byId("expenseForm").addEventListener("submit", async event => {
   submitButton.textContent = "正在同步...";
   const newExpense = {
     trip_code: TRIP_CODE,
-    title: byId("expenseTitle").value.trim(),
+    title: cleanProfileText(byId("expenseTitle").value),
     amount: Number(byId("expenseAmount").value),
     payer: byId("expensePayer").value,
     category: selectedCategory,
@@ -386,8 +768,6 @@ byId("expenseForm").addEventListener("submit", async event => {
     return;
   }
 
-  activities.unshift({ who: memberById(newExpense.payer).name, initial: memberById(newExpense.payer).initial, tone: memberById(newExpense.payer).tone, text: `添加了一笔「${newExpense.title}」`, time: "刚刚" });
-  renderActivities();
   closeExpenseModal();
   await loadSharedExpenses({ quiet: true });
   showToast("开销已同步给所有同行朋友");
@@ -395,24 +775,85 @@ byId("expenseForm").addEventListener("submit", async event => {
 
 byId("inviteButton").addEventListener("click", () => openSimpleModal("邀请朋友加入", "把下面的网址发给朋友，他们打开后就能看到并共同记录账单。", `<div class="invite-code">${TRIP_CODE}</div><button class="button button-primary full-button" id="copyInviteLink" type="button">复制邀请网址</button>`));
 byId("inviteRound").addEventListener("click", () => byId("inviteButton").click());
-byId("addPlanButton").addEventListener("click", () => openSimpleModal("添加共同安排", "完整产品中可以录入时间、地点、参与者和提醒。这个原型已经把入口和同步体验准备好了。", `<button class="button button-primary full-button" onclick="document.getElementById('simpleModal').classList.remove('open');">知道了</button>`));
-byId("editRoomsButton").addEventListener("click", () => showToast("分房编辑模式已开启，点击成员即可调整"));
-byId("settleAllButton").addEventListener("click", () => openSimpleModal("结算单已生成", "系统已合并全部往来。确认后会分别提醒需要转账的朋友。", `<button class="button button-primary full-button" onclick="document.getElementById('simpleModal').classList.remove('open');">通知大家结算</button>`));
+byId("profileButton").addEventListener("click", openProfileModal);
+byId("mobileProfileButton").addEventListener("click", openProfileModal);
+byId("addPlanButton").addEventListener("click", openPlanModal);
+byId("editRoomsButton").addEventListener("click", openRoomEditor);
+byId("voucherButton").addEventListener("click", openVoucher);
+byId("tripInfoButton").addEventListener("click", openTripInfo);
+byId("settleAllButton").addEventListener("click", copySettlementSummary);
+document.querySelectorAll("[data-checklist-id]").forEach(checkbox => checkbox.addEventListener("change", () => saveChecklistItem(checkbox)));
+byId("ledgerList").addEventListener("click", event => {
+  const item = event.target.closest("[data-expense-id]");
+  if (item) openExpenseDetail(item.dataset.expenseId);
+});
+byId("scheduleList").addEventListener("click", event => {
+  const deleteButton = event.target.closest("[data-delete-plan]");
+  if (deleteButton) deletePlan(deleteButton.dataset.deletePlan);
+});
 
 [byId("expenseModal"), byId("simpleModal")].forEach(modal => modal.addEventListener("click", event => {
   if (event.target === modal) modal.classList.remove("open");
 }));
 byId("simpleModalContent").addEventListener("click", event => {
-  if (event.target.id !== "copyInviteLink") return;
-  navigator.clipboard?.writeText(SHARE_URL);
-  byId("simpleModal").classList.remove("open");
-  showToast("邀请网址已复制");
+  if (event.target.id === "copyInviteLink") {
+    navigator.clipboard?.writeText(SHARE_URL);
+    byId("simpleModal").classList.remove("open");
+    showToast("邀请网址已复制");
+    return;
+  }
+  if (event.target.id === "copyVoucherButton") {
+    navigator.clipboard?.writeText("安国站韩屋民宿\n确认号：AGH-SEOUL-0630\n入住：6 月 30 日 15:00 后\n地址：首尔钟路区北村路 12 街 8");
+    showToast("入住信息已复制");
+    return;
+  }
+  const deleteExpenseButton = event.target.closest("[data-delete-expense]");
+  if (deleteExpenseButton) {
+    deleteExpense(deleteExpenseButton.dataset.deleteExpense);
+    return;
+  }
+  const planPerson = event.target.closest("[data-plan-person]");
+  if (!planPerson) return;
+  const id = planPerson.dataset.planPerson;
+  if (selectedPlanParticipants.has(id) && selectedPlanParticipants.size > 1) selectedPlanParticipants.delete(id);
+  else selectedPlanParticipants.add(id);
+  planPerson.classList.toggle("selected", selectedPlanParticipants.has(id));
+  planPerson.classList.toggle("excluded", !selectedPlanParticipants.has(id));
+});
+byId("simpleModalContent").addEventListener("change", event => {
+  if (event.target.id !== "profileMemberId") return;
+  const member = memberById(event.target.value);
+  byId("profileDisplayName").value = member.name;
+  byId("profileDisplayRole").value = member.role;
+});
+byId("simpleModalContent").addEventListener("submit", async event => {
+  if (event.target.id === "planForm") {
+    event.preventDefault();
+    await saveSharedPlan(event.target);
+    return;
+  }
+  if (event.target.id === "roomForm") {
+    event.preventDefault();
+    await saveRoomAssignments(event.target);
+    return;
+  }
+  if (event.target.id !== "profileForm") return;
+  event.preventDefault();
+  saveProfile();
 });
 
+loadProfile();
 renderMembers();
+renderProfile();
 renderActivities();
 renderSchedule();
 renderRooms();
+renderChecklist();
 renderAllExpenseData();
 loadSharedExpenses();
 subscribeToSharedExpenses();
+loadSharedPlans();
+subscribeToSharedPlans();
+loadSharedRooms();
+loadSharedChecklist();
+subscribeToTripDetails();

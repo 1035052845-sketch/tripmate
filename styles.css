@@ -74,7 +74,7 @@ button { cursor: pointer; color: inherit; }
 .button-dark { background: var(--ink); color: #fff; }
 .icon-button { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 50%; background: var(--white); }
 .icon-button.small { width: 30px; height: 30px; }
-.notification-button span { width: 7px; height: 7px; border-radius: 50%; overflow: hidden; background: var(--coral); color: transparent; box-shadow: -4px 4px 0 4px #d8d8cf; }
+.profile-shortcut span { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--coral); color: #fff; font-size: 9px; font-weight: 900; }
 .text-button, .mini-link { border: 0; background: transparent; padding: 4px 0; color: var(--ink); font-size: 11px; font-weight: 800; }
 .mini-link { margin-top: 10px; color: var(--coral-dark); }
 
@@ -294,6 +294,24 @@ button { cursor: pointer; color: inherit; }
 .simple-modal h2 { margin-bottom: 7px; }
 .simple-modal p { color: var(--muted); font-size: 10px; line-height: 1.7; }
 .simple-modal .invite-code { margin: 20px 0; padding: 16px; border: 1px dashed var(--coral); border-radius: 10px; background: #fff8f0; color: var(--coral-dark); font-size: 20px; font-weight: 900; letter-spacing: 3px; }
+.profile-form { margin-top: 20px; text-align: left; }
+.profile-form .profile-form-note { margin: -3px 0 4px; padding: 10px; border-radius: 8px; background: #f3eee3; color: var(--muted); font-size: 8px; line-height: 1.6; text-align: left; }
+.plan-participants { display: flex; flex-wrap: wrap; gap: 7px; }
+.plan-participants .split-person.selected { border-color: var(--ink); background: #eef1eb; }
+.schedule-item.shared-plan { border-color: #efc94e; background: #fffaf0; }
+.schedule-item.shared-plan { grid-template-columns: 70px 38px minmax(0, 1fr) auto auto; }
+.shared-plan-label { display: inline-flex; margin-left: 6px; padding: 2px 5px; border-radius: 99px; background: var(--yellow); color: var(--ink); font-size: 7px; vertical-align: middle; }
+.item-actions { display: flex; align-items: center; gap: 5px; }
+.item-action { display: grid; place-items: center; width: 27px; height: 27px; border: 1px solid var(--line); border-radius: 7px; background: var(--white); color: var(--muted); font-size: 9px; }
+.item-action:hover { border-color: var(--coral); color: var(--coral-dark); }
+.ledger-item.clickable { cursor: pointer; }
+.ledger-item.clickable:hover { background: #faf7f0; }
+.voucher-details { display: grid; gap: 10px; margin: 20px 0; text-align: left; }
+.voucher-details div { display: flex; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 9px; }
+.voucher-details span { color: var(--muted); }
+.room-editor { display: grid; gap: 9px; margin: 20px 0; text-align: left; }
+.room-editor label { display: grid; grid-template-columns: 35px 1fr 140px; align-items: center; gap: 8px; padding: 7px; border-radius: 8px; background: #f5f1e9; }
+.room-editor select { padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: #fff; font-size: 9px; }
 .toast { position: fixed; z-index: 50; right: 24px; bottom: 24px; display: flex; align-items: center; gap: 9px; padding: 12px 16px; border-radius: 10px; background: var(--ink); color: #fff; box-shadow: var(--shadow); opacity: 0; transform: translateY(10px); pointer-events: none; transition: .25s ease; }
 .toast.show { opacity: 1; transform: none; }
 .toast span { display: grid; place-items: center; width: 19px; height: 19px; border-radius: 50%; background: var(--mint); color: var(--ink); font-size: 10px; font-weight: 900; }
@@ -329,7 +347,10 @@ button { cursor: pointer; color: inherit; }
   .page-intro .button { padding: 9px 10px; white-space: nowrap; }
   .plan-side { grid-template-columns: 1fr; }
   .schedule-item { grid-template-columns: 48px 34px 1fr; padding: 13px; }
+  .schedule-item.shared-plan { grid-template-columns: 48px 34px 1fr auto; }
   .schedule-members { display: none; }
+  .room-editor label { grid-template-columns: 32px 1fr; }
+  .room-editor select { grid-column: 1 / -1; }
   .hotel-card { grid-template-columns: 1fr; }
   .hotel-image { min-height: 180px; }
   .hotel-info { padding: 24px; }

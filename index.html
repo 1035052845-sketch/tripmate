@@ -15,7 +15,7 @@
           <span>同行</span>
         </a>
 
-        <button class="trip-switcher" type="button">
+        <button class="trip-switcher" id="tripInfoButton" type="button">
           <span class="trip-cover">首</span>
           <span class="trip-switcher-copy">
             <strong>首尔吃喝小分队</strong>
@@ -48,9 +48,9 @@
             <small id="syncTime">刚刚更新</small>
           </div>
         </div>
-        <button class="profile-card" type="button">
-          <span class="avatar avatar-dark">路</span>
-          <span><strong>露露</strong><small>旅行发起人</small></span>
+        <button class="profile-card" id="profileButton" type="button">
+          <span class="avatar avatar-dark" id="profileAvatar">露</span>
+          <span><strong id="profileName">露露</strong><small id="profileRole">旅行发起人</small></span>
           <span class="chevron">•••</span>
         </button>
       </aside>
@@ -62,8 +62,8 @@
             <h1 id="pageTitle">首尔吃喝小分队</h1>
           </div>
           <div class="top-actions">
-            <button class="icon-button notification-button" type="button" aria-label="通知">
-              <span>●</span>
+            <button class="icon-button profile-shortcut" id="mobileProfileButton" type="button" aria-label="编辑个人资料">
+              <span id="mobileProfileAvatar">露</span>
             </button>
             <button class="button button-secondary" id="inviteButton" type="button">邀请朋友</button>
             <button class="button button-primary add-expense-trigger" type="button">
@@ -93,9 +93,9 @@
               <span class="stamp">SEOUL<br /><small>06.30</small></span>
             </div>
             <div class="trip-progress">
-              <span style="width: 72%"></span>
+              <span id="prepProgress" style="width: 60%"></span>
             </div>
-            <p class="progress-label">行前准备 8 / 11 项已完成</p>
+            <p class="progress-label" id="prepProgressLabel">行前准备 3 / 5 项已完成</p>
           </div>
 
           <div class="section-heading">
@@ -185,12 +185,12 @@
                 <div><p>首尔 · 当天</p><strong>27°</strong><small>晴朗，适合步行</small></div>
               </div>
               <div class="panel checklist-card">
-                <div class="panel-title compact"><h3>出发前清单</h3><span>8 / 11</span></div>
-                <label><input type="checkbox" checked /> 签证 / K-ETA</label>
-                <label><input type="checkbox" checked /> 购买电话卡</label>
-                <label><input type="checkbox" checked /> 换韩元</label>
-                <label><input type="checkbox" /> 下载离线地图</label>
-                <label><input type="checkbox" /> 最终确认行李</label>
+                <div class="panel-title compact"><h3>出发前清单</h3><span>3 / 5</span></div>
+                <label><input type="checkbox" data-checklist-id="visa" checked /> 签证 / K-ETA</label>
+                <label><input type="checkbox" data-checklist-id="sim" checked /> 购买电话卡</label>
+                <label><input type="checkbox" data-checklist-id="cash" checked /> 换韩元</label>
+                <label><input type="checkbox" data-checklist-id="map" /> 下载离线地图</label>
+                <label><input type="checkbox" data-checklist-id="luggage" /> 最终确认行李</label>
               </div>
             </aside>
           </div>
@@ -215,7 +215,7 @@
                 <div><small>退房</small><strong>7 月 4 日 11:00</strong></div>
                 <div><small>预订人</small><strong>露露 · Booking</strong></div>
               </div>
-              <button class="button button-secondary" type="button">查看入住凭证</button>
+              <button class="button button-secondary" id="voucherButton" type="button">查看入住凭证</button>
             </div>
           </article>
           <div class="section-heading"><div><p class="eyebrow">3 ROOMS</p><h2>房间分配</h2></div><span class="soft-note">点击成员可更换房间</span></div>
@@ -229,7 +229,7 @@
           </div>
           <div class="expense-summary-grid">
             <div class="summary-tile total-tile"><p>旅行总花费</p><strong id="expensePageTotal">¥0</strong><small id="expenseCount">共 0 笔开销</small></div>
-            <div class="summary-tile"><p>我的实际支付</p><strong id="myPaid">¥0</strong><small>以露露的身份查看</small></div>
+            <div class="summary-tile"><p>我的实际支付</p><strong id="myPaid">¥0</strong><small id="myIdentityHint">以露露的身份查看</small></div>
             <div class="summary-tile highlight"><p>我的最终余额</p><strong id="myBalance">¥0</strong><small id="balanceHint">正在计算</small></div>
           </div>
           <div class="expenses-layout">
@@ -244,7 +244,7 @@
               <div class="panel-title"><div><p class="eyebrow">SETTLE UP</p><h2>最省事结算方案</h2></div></div>
               <p class="settlement-copy">系统已将多笔往来合并成最少转账次数。</p>
               <div class="settlement-list" id="settlementList"></div>
-              <button class="button button-dark full-button" id="settleAllButton" type="button">发起一键结算</button>
+              <button class="button button-dark full-button" id="settleAllButton" type="button">复制结算清单</button>
             </aside>
           </div>
         </section>
